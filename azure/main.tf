@@ -41,8 +41,9 @@ locals {
   listener_name                  = "fiap-tech-challenge-application-gateway-public-ip-http-listener"
   request_routing_rule_name      = "fiap-tech-challenge-application-gateway-services-routing-rule"
 
-  api_backend_address_pool_name  = "fiap-tech-challenge-application-gateway-api-backend-pool"
-  api_http_setting_name          = "fiap-tech-challenge-application-gateway-api-http-settings"
+  api_backend_address_pool_name = "fiap-tech-challenge-application-gateway-api-backend-pool"
+  api_http_setting_name         = "fiap-tech-challenge-application-gateway-api-http-settings"
+
   auth_backend_address_pool_name = "fiap-tech-challenge-application-gateway-auth-backend-pool"
   auth_http_setting_name         = "fiap-tech-challenge-application-gateway-auth-http-settings"
 }
@@ -74,7 +75,8 @@ resource "azurerm_application_gateway" "app_gateway" {
   }
 
   backend_address_pool {
-    name = local.api_backend_address_pool_name
+    name  = local.api_backend_address_pool_name
+    fqdns = ["172.210.124.176"]
   }
 
   backend_address_pool {
@@ -96,10 +98,11 @@ resource "azurerm_application_gateway" "app_gateway" {
     name                                = local.api_http_setting_name
     cookie_based_affinity               = "Disabled"
     path                                = ""
-    port                                = 80
+    port                                = 9000
     protocol                            = "Http"
     request_timeout                     = 60
     pick_host_name_from_backend_address = true
+    probe_name                          = "api-health-probe"
   }
 
   http_listener {
@@ -119,6 +122,16 @@ resource "azurerm_application_gateway" "app_gateway" {
     url_path_map_name          = "fiap-tech-challenge-gateway-route-paths"
   }
 
+  probe {
+    name                                      = "api-health-probe"
+    protocol                                  = "Http"
+    pick_host_name_from_backend_http_settings = true
+    path                                      = "/health"
+    interval                                  = 30
+    timeout                                   = 30
+    unhealthy_threshold                       = 3
+  }
+
   url_path_map {
     name                               = "fiap-tech-challenge-gateway-route-paths"
     default_backend_address_pool_name  = local.auth_backend_address_pool_name
@@ -130,14 +143,66 @@ resource "azurerm_application_gateway" "app_gateway" {
       backend_http_settings_name = local.auth_http_setting_name
     }
     path_rule {
-      name                       = "api-service"
-      paths                      = ["/api"]
+      name                       = "customer-service"
+      paths                      = ["/cliente"]
       backend_address_pool_name  = local.api_backend_address_pool_name
       backend_http_settings_name = local.api_http_setting_name
     }
+    path_rule {
+      name                       = "order-service"
+      paths                      = ["/pedido"]
+      backend_address_pool_name  = local.api_backend_address_pool_name
+      backend_http_settings_name = local.api_http_setting_name
+    }
+    path_rule {
+      name                       = "cart-service"
+      paths                      = ["/carrinho"]
+      backend_address_pool_name  = local.api_backend_address_pool_name
+      backend_http_settings_name = local.api_http_setting_name
+    }
+    path_rule {
+      name                       = "menu-service"
+      paths                      = ["/cardapio"]
+      backend_address_pool_name  = local.api_backend_address_pool_name
+      backend_http_settings_name = local.api_http_setting_name
+    }
+
   }
 
   tags = {
     environment = data.azurerm_resource_group.main_group.tags["environment"]
+  }
+}
+
+data "azurerm_storage_account" "log_storage_account" {
+  name                = "sandubalog"
+  resource_group_name = "fiap-tech-challenge-observability-group"
+}
+
+data "azurerm_log_analytics_workspace" "log_workspace" {
+  name                = "fiap-tech-challenge-observability-workspace"
+  resource_group_name = "fiap-tech-challenge-observability-group"
+}
+
+resource "azurerm_monitor_diagnostic_setting" "application_gateway_monitor" {
+  name                       = "fiap-tech-challenge-application-gateway-monitor"
+  target_resource_id         = azurerm_application_gateway.app_gateway.id
+  storage_account_id         = data.azurerm_storage_account.log_storage_account.id
+  log_analytics_workspace_id = data.azurerm_log_analytics_workspace.log_workspace.id
+
+  enabled_log {
+    category = "ApplicationGatewayAccessLog"
+  }
+
+  enabled_log {
+    category = "ApplicationGatewayPerformanceLog"
+  }
+
+  enabled_log {
+    category = "ApplicationGatewayFirewallLog"
+  }
+
+  metric {
+    category = "AllMetrics"
   }
 }
